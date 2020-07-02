@@ -68,17 +68,17 @@ func Seal(key, nonce, plaintext []byte) (ciphertext []byte) {
 	state.v3 ^= n2
 	permuteRight(&state)
 
+	state.v0 ^= 0xfd
+
 	lp64 := len(p64) - 4
 	pp := p64[:lp64]
 	gamma := uint64(0)
 	v0, v1, v2, v3 := state.v0, state.v1, state.v2, state.v3
 	for n := 0; n < passes; n++ {
 		for i, p := range pp {
-			p += v3
-			pp[i] = p
-			v3 += p
+			v3 ^= p
 			v0 ^= bits.RotateLeft64(k1, int(gamma>>58))
-			v1 ^= n1
+			v2 ^= n1 + gamma
 			{
 				v0 += v1
 				v2 += v3
@@ -95,24 +95,27 @@ func Seal(key, nonce, plaintext []byte) (ciphertext []byte) {
 				v3 ^= v0
 				v2 = bits.RotateLeft64(v2, 32)
 			}
+			v1 ^= p
+			pp[i] += v3
 			gamma += delta
 			k1, k2 = k2, k1
 			n1, n2 = n2, n1
 		}
 	}
 	state.v0, state.v1, state.v2, state.v3 = v0, v1, v2, v3
-	state.v1 ^= 0xfe
+
+	state.v0 ^= 0xfe
 	for n := 0; n < 4; n++ {
-		state.v0 ^= k1
-		state.v2 ^= k2
-		state.v3 ^= n1 + gamma
+		state.v1 ^= k1
+		state.v3 ^= k2
+		state.v2 ^= n1 + gamma
 		permuteRight(&state)
 		gamma += delta
 		k1, k2 = k2, k1
 		n1, n2 = n2, n1
 	}
-	state.v0 ^= k1
-	state.v2 ^= k2
+	state.v1 ^= k1
+	state.v3 ^= k2
 	p64[lp64] = state.v0
 	p64[lp64+1] = state.v1
 	p64[lp64+2] = state.v2
@@ -141,19 +144,19 @@ func Open(key, nonce, ciphertext []byte) (plaintext []byte) {
 		v2: p64[lp64+2],
 		v3: p64[lp64+3],
 	}
-	state.v0 ^= k1
-	state.v2 ^= k2
+	state.v1 ^= k1
+	state.v3 ^= k2
 
 	for n := 0; n < 4; n++ {
 		k1, k2 = k2, k1
 		n1, n2 = n2, n1
 		gamma -= delta
 		permuteLeft(&state)
-		state.v0 ^= k1
-		state.v2 ^= k2
-		state.v3 ^= n1 + gamma
+		state.v1 ^= k1
+		state.v3 ^= k2
+		state.v2 ^= n1 + gamma
 	}
-	state.v1 ^= 0xfe
+	state.v0 ^= 0xfe
 
 	v0, v1, v2, v3 := state.v0, state.v1, state.v2, state.v3
 	for n := 0; n < passes; n++ {
@@ -162,6 +165,8 @@ func Open(key, nonce, ciphertext []byte) (plaintext []byte) {
 			k1, k2 = k2, k1
 			n1, n2 = n2, n1
 
+			pp[i] -= v3
+			v1 ^= pp[i]
 			{
 				v2 = bits.RotateLeft64(v2, 32)
 				v1 ^= v2
@@ -179,13 +184,15 @@ func Open(key, nonce, ciphertext []byte) (plaintext []byte) {
 				v2 -= v3
 			}
 			v0 ^= bits.RotateLeft64(k1, int(gamma>>58))
-			v1 ^= n1
-
-			v3 -= pp[i]
-			pp[i] -= v3
+			v2 ^= n1 + gamma
+			v3 ^= pp[i]
 		}
 	}
+
 	state.v0, state.v1, state.v2, state.v3 = v0, v1, v2, v3
+
+	state.v0 ^= 0xfd
+
 	permuteLeft(&state)
 	state.v3 ^= n2
 	permuteLeft(&state)
