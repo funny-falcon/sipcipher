@@ -9,28 +9,77 @@ import (
 const delta = uint64(0x9e3779b97f4a7c15)
 const passes = 3
 
+type spoonge struct {
+	v0, v1, v2, v3 uint64
+}
+
+func permuteRight(s *spoonge) {
+	v0, v1, v2, v3 := s.v0, s.v1, s.v2, s.v3
+	v0 += v1
+	v2 += v3
+	v1 = bits.RotateLeft64(v1, 13)
+	v3 = bits.RotateLeft64(v3, 16)
+	v1 ^= v0
+	v3 ^= v2
+	v0 = bits.RotateLeft64(v0, 32)
+	v2 += v1
+	v0 += v3
+	v1 = bits.RotateLeft64(v1, 17)
+	v3 = bits.RotateLeft64(v3, 21)
+	v1 ^= v2
+	v3 ^= v0
+	v2 = bits.RotateLeft64(v2, 32)
+	s.v0, s.v1, s.v2, s.v3 = v0, v1, v2, v3
+}
+
+func permuteLeft(s *spoonge) {
+	v0, v1, v2, v3 := s.v0, s.v1, s.v2, s.v3
+	v2 = bits.RotateLeft64(v2, 32)
+	v1 ^= v2
+	v3 ^= v0
+	v1 = bits.RotateLeft64(v1, 64-17)
+	v3 = bits.RotateLeft64(v3, 64-21)
+	v2 -= v1
+	v0 -= v3
+	v0 = bits.RotateLeft64(v0, 32)
+	v1 ^= v0
+	v3 ^= v2
+	v1 = bits.RotateLeft64(v1, 64-13)
+	v3 = bits.RotateLeft64(v3, 64-16)
+	v0 -= v1
+	v2 -= v3
+	s.v0, s.v1, s.v2, s.v3 = v0, v1, v2, v3
+}
+
 func Seal(key, nonce, plaintext []byte) (ciphertext []byte) {
 	k1, k2 := bytesTo2U64(key)
 	n1, n2 := bytesTo2U64(nonce)
-	p64 := bytesToU64s(plaintext, 24, 9)
-	lp64 := len(p64)
-	gamma := uint64(0)
-	nix := 0
-	for n := 0; n < passes; n++ {
-		left := p64[lp64-1]
-		for i := range p64 {
-			var right uint64
-			if i < lp64-1 {
-				right = p64[i+1]
-			} else {
-				right = p64[0]
-			}
-			var p uint64
-			{
-				v1, v3 := left, right
-				v0 := k1 ^ (gamma + n1)
-				v2 := k2 ^ (gamma + n2)
+	p64 := bytesToU64s(plaintext, true)
 
+	state := spoonge{
+		v0: k1 ^ 0x736f6d6570736575,
+		v1: k2 ^ 0x646f72616e646f6d,
+		v2: k1 ^ 0x6c7967656e657261,
+		v3: k2 ^ 0x7465646279746573,
+	}
+
+	state.v3 ^= n1
+	permuteRight(&state)
+	state.v3 ^= n2
+	permuteRight(&state)
+
+	state.v0 ^= 0xfd
+
+	lp64 := len(p64) - 4
+	pp := p64[:lp64]
+	gamma := uint64(0)
+	v0, v1, v2, v3 := state.v0, state.v1, state.v2, state.v3
+	for n := 0; n < passes; n++ {
+		for i, p := range pp {
+			v3 ^= p
+			v0 ^= bits.RotateLeft64(k1, int(gamma>>58))
+			v2 ^= n1 + gamma
+			{
 				v0 += v1
 				v2 += v3
 				v1 = bits.RotateLeft64(v1, 13)
@@ -44,19 +93,33 @@ func Seal(key, nonce, plaintext []byte) (ciphertext []byte) {
 				v3 = bits.RotateLeft64(v3, 21)
 				v1 ^= v2
 				v3 ^= v0
-				//v2 = bits.RotateLeft64(v2, 32)
-
-				p = v1 + v3
+				v2 = bits.RotateLeft64(v2, 32)
 			}
-			p64[i] ^= p
-			left = p64[i]
+			v1 ^= p
+			pp[i] += v3
 			gamma += delta
-			nix++
+			k1, k2 = k2, k1
 			n1, n2 = n2, n1
-			k1 = bits.RotateLeft64(k1, 3)
-			k2 = bits.RotateLeft64(k2, 5)
 		}
 	}
+	state.v0, state.v1, state.v2, state.v3 = v0, v1, v2, v3
+
+	state.v0 ^= 0xfe
+	for n := 0; n < 4; n++ {
+		state.v1 ^= k1
+		state.v3 ^= k2
+		state.v2 ^= n1 + gamma
+		permuteRight(&state)
+		gamma += delta
+		k1, k2 = k2, k1
+		n1, n2 = n2, n1
+	}
+	state.v1 ^= k1
+	state.v3 ^= k2
+	p64[lp64] = state.v0
+	p64[lp64+1] = state.v1
+	p64[lp64+2] = state.v2
+	p64[lp64+3] = state.v3
 	res := u64sToBytes(p64)
 	return res
 }
@@ -64,67 +127,98 @@ func Seal(key, nonce, plaintext []byte) (ciphertext []byte) {
 func Open(key, nonce, ciphertext []byte) (plaintext []byte) {
 	k1, k2 := bytesTo2U64(key)
 	n1, n2 := bytesTo2U64(nonce)
-	p64 := bytesToU64s(ciphertext, 0, 0)
-	lp64 := len(p64)
-	nix := lp64 * passes
+	p64 := bytesToU64s(ciphertext, false)
+	lp64 := len(p64) - 4
+	pp := p64[:lp64]
+
+	nix := lp64*passes + 4
 	if nix&1 != 0 {
 		n1, n2 = n2, n1
+		k1, k2 = k2, k1
 	}
-	k1 = bits.RotateLeft64(k1, (nix*3)&63)
-	k2 = bits.RotateLeft64(k2, (nix*5)&63)
 	gamma := delta * uint64(nix)
-	for nix > 0 {
-		right := p64[0]
-		for i := lp64 - 1; i >= 0; i-- {
-			nix--
-			gamma -= delta
-			n1, n2 = n2, n1
-			var left uint64
-			if i > 0 {
-				left = p64[i-1]
-			} else {
-				left = p64[lp64-1]
-			}
-			k1 = bits.RotateLeft64(k1, 64-3)
-			k2 = bits.RotateLeft64(k2, 64-5)
-			var p uint64
-			{
-				v1, v3 := left, right
-				v0 := k1 ^ (gamma + n1)
-				v2 := k2 ^ (gamma + n2)
 
-				v0 += v1
-				v2 += v3
-				v1 = bits.RotateLeft64(v1, 13)
-				v3 = bits.RotateLeft64(v3, 16)
-				v1 ^= v0
-				v3 ^= v2
-				v0 = bits.RotateLeft64(v0, 32)
-				v2 += v1
-				v0 += v3
-				v1 = bits.RotateLeft64(v1, 17)
-				v3 = bits.RotateLeft64(v3, 21)
+	state := spoonge{
+		v0: p64[lp64],
+		v1: p64[lp64+1],
+		v2: p64[lp64+2],
+		v3: p64[lp64+3],
+	}
+	state.v1 ^= k1
+	state.v3 ^= k2
+
+	for n := 0; n < 4; n++ {
+		k1, k2 = k2, k1
+		n1, n2 = n2, n1
+		gamma -= delta
+		permuteLeft(&state)
+		state.v1 ^= k1
+		state.v3 ^= k2
+		state.v2 ^= n1 + gamma
+	}
+	state.v0 ^= 0xfe
+
+	v0, v1, v2, v3 := state.v0, state.v1, state.v2, state.v3
+	for n := 0; n < passes; n++ {
+		for i := len(pp) - 1; i >= 0; i-- {
+			gamma -= delta
+			k1, k2 = k2, k1
+			n1, n2 = n2, n1
+
+			pp[i] -= v3
+			v1 ^= pp[i]
+			{
+				v2 = bits.RotateLeft64(v2, 32)
 				v1 ^= v2
 				v3 ^= v0
-				//v2 = bits.RotateLeft64(v2, 32)
-
-				p = v1 + v3
+				v1 = bits.RotateLeft64(v1, 64-17)
+				v3 = bits.RotateLeft64(v3, 64-21)
+				v2 -= v1
+				v0 -= v3
+				v0 = bits.RotateLeft64(v0, 32)
+				v1 ^= v0
+				v3 ^= v2
+				v1 = bits.RotateLeft64(v1, 64-13)
+				v3 = bits.RotateLeft64(v3, 64-16)
+				v0 -= v1
+				v2 -= v3
 			}
-			p64[i] ^= p
-			right = p64[i]
+			v0 ^= bits.RotateLeft64(k1, int(gamma>>58))
+			v2 ^= n1 + gamma
+			v3 ^= pp[i]
 		}
 	}
-	buf := u64sToBytes(p64)
+
+	state.v0, state.v1, state.v2, state.v3 = v0, v1, v2, v3
+
+	state.v0 ^= 0xfd
+
+	permuteLeft(&state)
+	state.v3 ^= n2
+	permuteLeft(&state)
+	state.v3 ^= n1
+
+	compare := spoonge{
+		v0: k1 ^ 0x736f6d6570736575,
+		v1: k2 ^ 0x646f72616e646f6d,
+		v2: k1 ^ 0x6c7967656e657261,
+		v3: k2 ^ 0x7465646279746573,
+	}
+	if state != compare {
+		panic("NO KEY")
+	}
+
+	buf := u64sToBytes(pp)
 	padlen := int(buf[len(buf)-1])
 	if padlen > len(buf) {
-		panic("NO")
+		panic("NO LEN")
 	}
 	sum := uint32(0)
 	for _, x := range buf[len(buf)-padlen : len(buf)-1] {
-		sum += uint32(x)
+		sum |= uint32(x)
 	}
 	if sum != 0 {
-		panic("NO")
+		panic("NO PAD")
 	}
 	return buf[:len(buf)-int(buf[len(buf)-1])]
 }
@@ -140,16 +234,19 @@ func bytesTo2U64(b []byte) (r1, r2 uint64) {
 	return r1, r2
 }
 
-func bytesToU64s(b []byte, minsize, minpad int) (res []uint64) {
-	sz := len(b) + minpad
-	if sz < minsize {
-		sz = minsize
+func bytesToU64s(b []byte, encode bool) (res []uint64) {
+	sz := len(b)
+	if encode {
+		sz = (sz + 1 + 7) &^ 7
+		if sz < 24 {
+			sz = 24
+		}
+		sz += 32
 	}
-	sz = (sz + 7) &^ 7
 	br := make([]byte, sz)
 	copy(br, b)
-	if sz > len(b) {
-		br[sz-1] = byte(sz - len(b))
+	if encode {
+		br[sz-33] = byte(sz - 32 - len(b))
 	}
 	bh := (*sliceHeader)(unsafe.Pointer(&br))
 	rh := (*sliceHeader)(unsafe.Pointer(&res))
