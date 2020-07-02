@@ -77,7 +77,7 @@ func Seal(key, nonce, plaintext []byte) (ciphertext []byte) {
 	for n := 0; n < passes; n++ {
 		for i, p := range pp {
 			v3 ^= p
-			v0 ^= bits.RotateLeft64(k1, int(gamma>>58))
+			v1 ^= bits.RotateLeft64(k1, int(gamma>>58))
 			v2 ^= n1 + gamma
 			{
 				v0 += v1
@@ -86,16 +86,16 @@ func Seal(key, nonce, plaintext []byte) (ciphertext []byte) {
 				v3 = bits.RotateLeft64(v3, 16)
 				v1 ^= v0
 				v3 ^= v2
-				v0 = bits.RotateLeft64(v0, 32)
+				v2 = bits.RotateLeft64(v2, 32)
 				v2 += v1
 				v0 += v3
 				v1 = bits.RotateLeft64(v1, 17)
 				v3 = bits.RotateLeft64(v3, 21)
 				v1 ^= v2
 				v3 ^= v0
-				v2 = bits.RotateLeft64(v2, 32)
+				v0 = bits.RotateLeft64(v0, 32)
 			}
-			v1 ^= p
+			v0 ^= p
 			pp[i] += v3
 			gamma += delta
 			k1, k2 = k2, k1
@@ -166,16 +166,16 @@ func Open(key, nonce, ciphertext []byte) (plaintext []byte) {
 			n1, n2 = n2, n1
 
 			pp[i] -= v3
-			v1 ^= pp[i]
+			v0 ^= pp[i]
 			{
-				v2 = bits.RotateLeft64(v2, 32)
+				v0 = bits.RotateLeft64(v0, 32)
 				v1 ^= v2
 				v3 ^= v0
 				v1 = bits.RotateLeft64(v1, 64-17)
 				v3 = bits.RotateLeft64(v3, 64-21)
 				v2 -= v1
 				v0 -= v3
-				v0 = bits.RotateLeft64(v0, 32)
+				v2 = bits.RotateLeft64(v2, 32)
 				v1 ^= v0
 				v3 ^= v2
 				v1 = bits.RotateLeft64(v1, 64-13)
@@ -183,7 +183,7 @@ func Open(key, nonce, ciphertext []byte) (plaintext []byte) {
 				v0 -= v1
 				v2 -= v3
 			}
-			v0 ^= bits.RotateLeft64(k1, int(gamma>>58))
+			v1 ^= bits.RotateLeft64(k1, int(gamma>>58))
 			v2 ^= n1 + gamma
 			v3 ^= pp[i]
 		}
