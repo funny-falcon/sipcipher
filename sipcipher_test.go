@@ -1,6 +1,7 @@
 package sipcipher_test
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	mathrand "math/rand"
@@ -18,6 +19,18 @@ func init() {
 	mathrand.Read(key[:])
 	mathrand.Read(nonce[:])
 	mathrand.Read(plaintext[:])
+}
+
+func Test_SipCiper(t *testing.T) {
+	for i := 1; i < 128; i++ {
+		plaintext := make([]byte, i)
+		mathrand.Read(plaintext)
+		ciph := sipcipher.Seal(key[:], nonce[:], plaintext)
+		dec := sipcipher.Open(key[:], nonce[:], ciph)
+		if !bytes.Equal(plaintext, dec) {
+			t.Errorf("Not Equal %x and %x", plaintext, dec)
+		}
+	}
 }
 
 func Benchmark_SipCipher_32byte(b *testing.B) {
