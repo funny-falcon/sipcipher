@@ -104,18 +104,17 @@ func Seal(key, nonce, plaintext []byte) (ciphertext []byte) {
 	}
 	state.v0, state.v1, state.v2, state.v3 = v0, v1, v2, v3
 
-	state.v0 ^= 0xfe
-	for n := 0; n < 4; n++ {
-		state.v1 ^= k1
-		state.v3 ^= k2
-		state.v2 ^= n1 + gamma
-		permuteRight(&state)
-		gamma += delta
-		k1, k2 = k2, k1
-		n1, n2 = n2, n1
-	}
 	state.v1 ^= k1
 	state.v3 ^= k2
+	state.v0 ^= n2 + 0xfe
+	state.v2 ^= n1 + gamma
+	for n := 0; n < 4; n++ {
+		permuteRight(&state)
+	}
+	state.v1 ^= k1 + k2
+	state.v3 ^= k2 + 2*k1
+	state.v0 ^= n2
+	state.v2 ^= n1
 	p64[lp64] = state.v0
 	p64[lp64+1] = state.v1
 	p64[lp64+2] = state.v2
@@ -131,7 +130,7 @@ func Open(key, nonce, ciphertext []byte) (plaintext []byte) {
 	lp64 := len(p64) - 4
 	pp := p64[:lp64]
 
-	nix := lp64*passes + 4
+	nix := lp64 * passes
 	if nix&1 != 0 {
 		n1, n2 = n2, n1
 		k1, k2 = k2, k1
@@ -144,19 +143,17 @@ func Open(key, nonce, ciphertext []byte) (plaintext []byte) {
 		v2: p64[lp64+2],
 		v3: p64[lp64+3],
 	}
+	state.v1 ^= k1 + k2
+	state.v3 ^= k2 + 2*k1
+	state.v0 ^= n2
+	state.v2 ^= n1
+	for n := 0; n < 4; n++ {
+		permuteLeft(&state)
+	}
 	state.v1 ^= k1
 	state.v3 ^= k2
-
-	for n := 0; n < 4; n++ {
-		k1, k2 = k2, k1
-		n1, n2 = n2, n1
-		gamma -= delta
-		permuteLeft(&state)
-		state.v1 ^= k1
-		state.v3 ^= k2
-		state.v2 ^= n1 + gamma
-	}
-	state.v0 ^= 0xfe
+	state.v0 ^= n2 + 0xfe
+	state.v2 ^= n1 + gamma
 
 	v0, v1, v2, v3 := state.v0, state.v1, state.v2, state.v3
 	for n := 0; n < passes; n++ {
