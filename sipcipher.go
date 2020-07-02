@@ -21,27 +21,27 @@ func permuteRight(s *spoonge) {
 	v3 = bits.RotateLeft64(v3, 16)
 	v1 ^= v0
 	v3 ^= v2
-	v0 = bits.RotateLeft64(v0, 32)
+	v2 = bits.RotateLeft64(v2, 32)
 	v2 += v1
 	v0 += v3
 	v1 = bits.RotateLeft64(v1, 17)
 	v3 = bits.RotateLeft64(v3, 21)
 	v1 ^= v2
 	v3 ^= v0
-	v2 = bits.RotateLeft64(v2, 32)
+	v0 = bits.RotateLeft64(v0, 32)
 	s.v0, s.v1, s.v2, s.v3 = v0, v1, v2, v3
 }
 
 func permuteLeft(s *spoonge) {
 	v0, v1, v2, v3 := s.v0, s.v1, s.v2, s.v3
-	v2 = bits.RotateLeft64(v2, 32)
+	v0 = bits.RotateLeft64(v0, 32)
 	v1 ^= v2
 	v3 ^= v0
 	v1 = bits.RotateLeft64(v1, 64-17)
 	v3 = bits.RotateLeft64(v3, 64-21)
 	v2 -= v1
 	v0 -= v3
-	v0 = bits.RotateLeft64(v0, 32)
+	v2 = bits.RotateLeft64(v2, 32)
 	v1 ^= v0
 	v3 ^= v2
 	v1 = bits.RotateLeft64(v1, 64-13)
@@ -65,10 +65,10 @@ func Seal(key, nonce, plaintext []byte) (ciphertext []byte) {
 
 	state.v3 ^= n1
 	permuteRight(&state)
+	state.v0 ^= n1
 	state.v3 ^= n2
 	permuteRight(&state)
-
-	state.v0 ^= 0xfd
+	state.v0 ^= n2 + 0xfd
 
 	lp64 := len(p64) - 4
 	pp := p64[:lp64]
@@ -188,10 +188,10 @@ func Open(key, nonce, ciphertext []byte) (plaintext []byte) {
 
 	state.v0, state.v1, state.v2, state.v3 = v0, v1, v2, v3
 
-	state.v0 ^= 0xfd
-
+	state.v0 ^= n2 + 0xfd
 	permuteLeft(&state)
 	state.v3 ^= n2
+	state.v0 ^= n1
 	permuteLeft(&state)
 	state.v3 ^= n1
 
