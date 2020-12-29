@@ -73,8 +73,8 @@ func Seal(key, nonce, plaintext []byte) (ciphertext []byte) {
 	lp64 := len(p64) - 4
 	pp := p64[:lp64]
 	gamma := uint64(0)
-	v0, v1, v2, v3 := state.v0, state.v1, state.v2, state.v3
 	for n := 0; n < passes; n++ {
+		v0, v1, v2, v3 := state.v0, state.v1, state.v2, state.v3
 		for i, p := range pp {
 			v3 ^= p
 			v0 ^= bits.RotateLeft64(k1, int(gamma>>58))
@@ -95,25 +95,25 @@ func Seal(key, nonce, plaintext []byte) (ciphertext []byte) {
 				v3 ^= v0
 				v2 = bits.RotateLeft64(v2, 32)
 			}
-			v1 ^= p
-			pp[i] += v3
+			v1 ^= bits.RotateLeft64(p, 1)
+			pp[i] ^= v3 + v1
+			gamma += delta
+			k1, k2 = k2, k1
+			n1, n2 = n2, n1
+		}
+		state.v0, state.v1, state.v2, state.v3 = v0, v1, v2, v3
+		state.v0 ^= 0xfe
+		for n := 0; n < 4; n++ {
+			state.v1 ^= k1
+			state.v3 ^= k2
+			state.v2 ^= n1 + gamma
+			permuteRight(&state)
 			gamma += delta
 			k1, k2 = k2, k1
 			n1, n2 = n2, n1
 		}
 	}
-	state.v0, state.v1, state.v2, state.v3 = v0, v1, v2, v3
 
-	state.v0 ^= 0xfe
-	for n := 0; n < 4; n++ {
-		state.v1 ^= k1
-		state.v3 ^= k2
-		state.v2 ^= n1 + gamma
-		permuteRight(&state)
-		gamma += delta
-		k1, k2 = k2, k1
-		n1, n2 = n2, n1
-	}
 	state.v1 ^= k1
 	state.v3 ^= k2
 	p64[lp64] = state.v0
@@ -131,7 +131,7 @@ func Open(key, nonce, ciphertext []byte) (plaintext []byte) {
 	lp64 := len(p64) - 4
 	pp := p64[:lp64]
 
-	nix := lp64*passes + 4
+	nix := (lp64 + 4) * passes
 	if nix&1 != 0 {
 		n1, n2 = n2, n1
 		k1, k2 = k2, k1
@@ -147,26 +147,26 @@ func Open(key, nonce, ciphertext []byte) (plaintext []byte) {
 	state.v1 ^= k1
 	state.v3 ^= k2
 
-	for n := 0; n < 4; n++ {
-		k1, k2 = k2, k1
-		n1, n2 = n2, n1
-		gamma -= delta
-		permuteLeft(&state)
-		state.v1 ^= k1
-		state.v3 ^= k2
-		state.v2 ^= n1 + gamma
-	}
-	state.v0 ^= 0xfe
-
-	v0, v1, v2, v3 := state.v0, state.v1, state.v2, state.v3
 	for n := 0; n < passes; n++ {
+		for n := 0; n < 4; n++ {
+			k1, k2 = k2, k1
+			n1, n2 = n2, n1
+			gamma -= delta
+			permuteLeft(&state)
+			state.v1 ^= k1
+			state.v3 ^= k2
+			state.v2 ^= n1 + gamma
+		}
+		state.v0 ^= 0xfe
+		v0, v1, v2, v3 := state.v0, state.v1, state.v2, state.v3
 		for i := len(pp) - 1; i >= 0; i-- {
 			gamma -= delta
 			k1, k2 = k2, k1
 			n1, n2 = n2, n1
 
-			pp[i] -= v3
-			v1 ^= pp[i]
+			pp[i] ^= v3 + v1
+			v1 ^= bits.RotateLeft64(pp[i], 1)
+			//v1 ^= pp[i]
 			{
 				v2 = bits.RotateLeft64(v2, 32)
 				v1 ^= v2
@@ -187,9 +187,8 @@ func Open(key, nonce, ciphertext []byte) (plaintext []byte) {
 			v2 ^= n1 + gamma
 			v3 ^= pp[i]
 		}
+		state.v0, state.v1, state.v2, state.v3 = v0, v1, v2, v3
 	}
-
-	state.v0, state.v1, state.v2, state.v3 = v0, v1, v2, v3
 
 	state.v0 ^= 0xfd
 
